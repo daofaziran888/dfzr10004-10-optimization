@@ -5,6 +5,48 @@
 这是一个前后端分离的管理平台：前端 Vue 3 + Vite + TypeScript，后端 FastAPI（Python）。
 两边各自独立启动，前端 dev server 已关掉自动打开页面，启动后按终端打印的地址手工打开。
 
+## 去重增量批次
+
+采集去重比对按「业务键列 + 时间边界」把大窗口拆成增量区间：
+
+- 每段独立比对，段内保留记录压成段摘要交给下游段，后续段不再遍历全量历史。
+- 每段持久化水位（记录序号、已比对记录/对数、最后记录）；中断后从上次水位续跑，
+  已收口区间不回退。
+- 已收口段按「配置签名 + 记录指纹 + 上段摘要哈希」缓存；新增记录只让受影响区间及
+  其下游失效，其余区间复用原摘要（DEDU-0003 的历史结论保持不变）。
+- 批次收口时落不可变结果快照，分页始终引用同一 `snapshot_id`；同一组重复记录不重复计数。
+- 同一策略同一窗口同时只允许一个批次推进，后来者进入等待；前序批次收口或中断后可推进。
+- 复核清单从快照同步，记录所属批次是否收口；统计报表展示本次扫描范围、被复用结果与
+  仍需人工确认数量。
+
+状态文件默认落在 `backend/var/dedup_state.json`，可用环境变量 `DEDUP_STATE_PATH` 覆盖；
+服务启动时自动恢复水位、分批进度、最近结果与复核项，并补齐 DEDU-0003 的历史基线。
+
+前端把「当前批次 / 快照 / 页码」存在 localStorage，刷新页面、重新进入或从复核清单
+返回列表时沿用同一快照。
+
+### 去重相关接口
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/dedup/{id}/batches` | 发起批次，可带 `窗口开始/窗口结束/分段天数/推进记录数` |
+| `GET /api/dedup/batches` | 批次列表（水位、分段进度、最近结果） |
+| `GET /api/dedup/batches/{batch_id}` | 单批次详情 |
+| `POST /api/dedup/batches/{batch_id}/advance` | 推进批次，`推进记录数` 可分批 |
+| `POST /api/dedup/batches/{batch_id}/interrupt` | 中断批次 |
+| `GET /api/dedup/batches/{batch_id}/results` | 按 `snapshot_id` 分页读结果 |
+| `GET /api/dedup/batches/{batch_id}/reviews` | 批次复核清单与待确认数 |
+| `GET/POST /api/dedup/reviews/...` | 复核清单与确认动作 |
+| `GET /api/dedup/report`、`GET /api/report/dedup-summary` | 统计口径 |
+| `POST /api/dedup/{id}/records` | 追加记录，只让受影响区间失效 |
+
+### 测试
+
+```bash
+cd backend
+.venv/bin/python -m unittest discover -s tests -v
+```
+
 ## 目录结构
 
 ```text

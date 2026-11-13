@@ -6,11 +6,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
+from app.services.dedup import DedupService
 from app.services.report import ReportService
 
 router = APIRouter(prefix="/api/report", tags=["采集统计报表"])
 
 service = ReportService()
+dedup_service = DedupService()
 
 LIST_FIELDS = ["报表编号", "统计维度", "统计周期", "指标集合", "数据来源", "生成时间", "报表格式", "分发方式"]
 STATUSES = ["草稿", "生成中", "已生成", "已归档"]
@@ -28,6 +30,22 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出采集统计报表清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "report", "total": total, "items": items}
+
+
+@router.get("/dedup-summary", response_model=dict)
+def dedup_summary(
+    policy: str | None = Query(default=None, description="按策略编号过滤"),
+    batch_id: str | None = Query(default=None, description="只看某个去重批次"),
+) -> dict[str, Any]:
+    """去重口径：本次扫描范围、被复用结果、仍需人工确认与未收口区间。"""
+    return dedup_service.report_summary(policy=policy, batch_id=batch_id)
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +74,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出采集统计报表清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "report", "total": total, "items": items}

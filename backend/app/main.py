@@ -10,9 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
+from app.services.dedup import bootstrap_dedup_state
 from app.store import store
 
 app = FastAPI(title="智能采集质量管控平台", version="1.0.0")
+
+# 去重批次的水位、分段进度与最近结果都在磁盘上；启动时恢复并补齐历史基线。
+bootstrap_dedup_state()
 
 app.add_middleware(
     CORSMiddleware,
